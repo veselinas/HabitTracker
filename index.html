@@ -475,7 +475,7 @@
 // ════════════════════════════════════════════════════════
 const TRACK_FILE   = 'habit-tracking.csv';
 const HABITS_FILE  = 'habit-list.csv';
-const ONEDRIVE_PATH = '/me/drive/root:/HabitTracker';  // folder in OneDrive
+const ONEDRIVE_PATH = '/me/drive/root:/App_HabitTracker';  // folder in OneDrive
 const FUTURE_DAYS  = 30;
 
 // ════════════════════════════════════════════════════════
@@ -521,7 +521,7 @@ function fmtDate(str) {
 const redirectUri = window.location.origin + window.location.pathname;
 document.getElementById('redirect-uri-display').textContent = redirectUri;
 
-function loadClientId() { return localStorage.getItem('ht_client_id') || ''; }
+function loadClientId() { return 'afced462-1691-4979-8bd8-01b09e171f93'; }
 function saveClientId(id) { localStorage.setItem('ht_client_id', id); }
 
 function initMSAL(clientId) {
