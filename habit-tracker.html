@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Habits">
+<title>Habit Tracker</title>
+
+<!-- MSAL for Microsoft/OneDrive auth -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-msal-browser/3.26.1/msal-browser.min.js"></script>
+
+<style>
+  /* ── Fonts ── */
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  /* ── Tokens ── */
+  :root {
+    --bg:        #0e0f11;
+    --surface:   #16181c;
+    --border:    #2a2d35;
+    --muted:     #3a3d47;
+    --text:      #e8eaf0;
+    --text-dim:  #7a7f90;
+    --accent:    #5b8fff;
+    --green:     #3ecf6e;
+    --yellow:    #f5c542;
+    --red:       #e05252;
+    --frozen-bg: #13151a;
+    --header-h:  112px;   /* 3 header rows */
+    --row-h:     52px;
+    --col-w:     62px;
+    --label-w:   110px;
+    --radius:    10px;
+    --safe-top:  env(safe-area-inset-top, 0px);
+    --safe-bot:  env(safe-area-inset-bottom, 0px);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  /* ── Layout ── */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bot);
+  }
+
+  /* ── Top bar ── */
+  #topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 10px;
+  }
+  #topbar h1 {
+    font-family: 'DM Mono', monospace;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    color: var(--text);
+    flex: 1;
+  }
+  .tb-btn {
+    display: flex; align-items: center; justify-content: center;
+    background: var(--muted);
+    border: none; border-radius: 8px;
+    color: var(--text); cursor: pointer;
+    font-size: 13px; font-family: 'DM Sans', sans-serif;
+    height: 36px; padding: 0 14px; gap: 6px;
+    transition: background .15s;
+    white-space: nowrap;
+  }
+  .tb-btn:active { background: var(--border); }
+  .tb-btn.primary { background: var(--accent); color: #fff; }
+  .tb-btn.primary:active { background: #4477ee; }
+  .tb-btn svg { flex-shrink: 0; }
+
+  /* ── Status bar ── */
+  #statusbar {
+    padding: 4px 14px;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    flex-shrink: 0;
+  }
+  #statusbar.error { color: var(--red); }
+  #statusbar.ok    { color: var(--green); }
+
+  /* ── Table wrapper ── */
+  #table-wrap {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── The grid ──
+     We use a real <table> but position sticky for frozen col + frozen header.
+  */
+  #habit-table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    /* extra bottom space so last row is reachable above iOS home bar */
+    margin-bottom: 20px;
+  }
+
+  /* All cells */
+  #habit-table th,
+  #habit-table td {
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+    vertical-align: middle;
+    padding: 0;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* Frozen label column */
+  .col-label {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    width: var(--label-w);
+    min-width: var(--label-w);
+    max-width: var(--label-w);
+    background: var(--frozen-bg);
+    text-align: left;
+    padding: 0 10px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* Frozen header rows */
+  .row-header th {
+    position: sticky;
+    z-index: 2;
+    background: var(--surface);
+    height: 36px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    user-select: none;
+  }
+  .row-header:nth-child(1) th { top: 0; z-index: 4; }
+  .row-header:nth-child(2) th { top: 36px; }
+  .row-header:nth-child(3) th { top: 72px; }
+
+  /* Corner (frozen + header) */
+  .row-header th.col-label {
+    z-index: 5;
+    background: var(--frozen-bg);
+  }
+
+  /* Data col width */
+  .col-data {
+    width: var(--col-w);
+    min-width: var(--col-w);
+  }
+
+  /* Date rows */
+  .row-date td {
+    height: var(--row-h);
+  }
+
+  .date-cell {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text);
+    background: var(--frozen-bg);
+    height: var(--row-h);
+  }
+  .date-cell.today {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .date-cell.future {
+    color: var(--text-dim);
+  }
+
+  /* Habit data cells */
+  .habit-cell {
+    cursor: pointer;
+    transition: background .1s;
+    position: relative;
+  }
+  .habit-cell:active { background: rgba(255,255,255,.04); }
+
+  /* State icons inside cells */
+  .cell-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .icon-no svg   { color: #c0392b; }
+  .icon-yes svg  { color: var(--green); }
+  .icon-part svg { color: var(--yellow); }
+  .icon-unk svg  { color: var(--muted); }
+  .icon-del svg  { color: var(--muted); opacity: .4; }
+
+  /* Today highlight column */
+  .today-col { background: rgba(91,143,255,.04); }
+
+  /* Category header row cells */
+  .cat-header-cell {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    padding: 0 4px;
+  }
+
+  /* Item header */
+  .item-header-cell {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text);
+    padding: 0 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: grab;
+  }
+  .item-header-cell.dragging { opacity: .4; }
+  .item-header-cell.drag-over { background: rgba(91,143,255,.18); }
+
+  /* Duration header */
+  .dur-header-cell {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: 'DM Mono', monospace;
+    padding: 0 4px;
+  }
+
+  /* ── Overlay / Modal ── */
+  #overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.65);
+    z-index: 100;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  #overlay.show { display: flex; }
+
+  #modal {
+    background: var(--surface);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 20px 18px calc(20px + var(--safe-bot));
+    width: 100%;
+    max-width: 480px;
+    border-top: 1px solid var(--border);
+  }
+  #modal h2 {
+    font-size: 16px; font-weight: 600; margin-bottom: 16px;
+  }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .07em; }
+  .field input, .field select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    padding: 10px 12px;
+    outline: none;
+    -webkit-appearance: none;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+
+  .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+  .modal-actions button { flex: 1; height: 44px; border: none; border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; cursor: pointer; }
+  #btn-cancel { background: var(--muted); color: var(--text); }
+  #btn-add    { background: var(--accent); color: #fff; }
+
+  /* ── Context menu ── */
+  #ctx-menu {
+    display: none;
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    z-index: 200;
+    overflow: hidden;
+    min-width: 150px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  #ctx-menu.show { display: block; }
+  .ctx-item {
+    padding: 12px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .ctx-item:active { background: var(--muted); }
+  .ctx-item.danger { color: var(--red); }
+
+  /* ── Login screen ── */
+  #login-screen {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 16px; padding: 24px;
+    text-align: center;
+  }
+  #login-screen h1 { font-family: 'DM Mono', monospace; font-size: 24px; margin-bottom: 4px; }
+  #login-screen p  { color: var(--text-dim); font-size: 13px; line-height: 1.6; max-width: 300px; }
+  #btn-login {
+    margin-top: 8px;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 12px;
+    font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500;
+    padding: 14px 32px; cursor: pointer;
+  }
+
+  /* Config screen */
+  #config-screen {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 14px; padding: 24px; text-align: center;
+  }
+  #config-screen h1 { font-family: 'DM Mono', monospace; font-size: 20px; }
+  #config-screen p  { color: var(--text-dim); font-size: 13px; line-height: 1.6; max-width: 320px; }
+  #client-id-input {
+    width: 100%; max-width: 380px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text);
+    font-family: 'DM Mono', monospace; font-size: 13px;
+    padding: 12px 14px; outline: none; text-align: center;
+  }
+  #client-id-input:focus { border-color: var(--accent); }
+  #btn-save-config {
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500;
+    padding: 12px 28px; cursor: pointer; max-width: 380px; width: 100%;
+  }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid var(--muted); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Loading */
+  #loading-screen {
+    display: none; align-items: center; justify-content: center;
+    height: 100%; flex-direction: column; gap: 14px;
+  }
+  #loading-screen span { color: var(--text-dim); font-size: 13px; }
+
+  /* Unsaved indicator */
+  #unsaved-dot {
+    width: 7px; height: 7px;
+    background: var(--yellow); border-radius: 50%;
+    display: none;
+  }
+  #unsaved-dot.show { display: inline-block; }
+
+  /* Scrollbar */
+  #table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+  #table-wrap::-webkit-scrollbar-track { background: var(--bg); }
+  #table-wrap::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ── Config Screen (first run) ── -->
+<div id="config-screen">
+  <h1>🗓 Habit Tracker</h1>
+  <p>Enter your Azure App (Client) ID to connect to your OneDrive account.</p>
+  <input id="client-id-input" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" autocorrect="off" spellcheck="false">
+  <p style="font-size:11px; color:var(--text-dim);">Redirect URI to register in Azure: <br><span id="redirect-uri-display" style="font-family:DM Mono,monospace; word-break:break-all; color:var(--accent)"></span></p>
+  <button id="btn-save-config">Continue →</button>
+</div>
+
+<!-- ── Login Screen ── -->
+<div id="login-screen" style="display:none">
+  <h1>🗓 Habit Tracker</h1>
+  <p>Sign in with your Microsoft account to load and save your habits from OneDrive.</p>
+  <button id="btn-login">Sign in with Microsoft</button>
+  <button id="btn-reset-config" style="background:none;border:none;color:var(--text-dim);font-size:12px;margin-top:8px;cursor:pointer;">Change Client ID</button>
+</div>
+
+<!-- ── Loading Screen ── -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <span id="loading-msg">Loading habits…</span>
+</div>
+
+<!-- ── Main App ── -->
+<div id="app" style="display:none">
+  <div id="topbar">
+    <button class="tb-btn" id="btn-add-habit" title="Add habit">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Add
+    </button>
+    <h1>Habits</h1>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div id="unsaved-dot" title="Unsaved changes"></div>
+      <button class="tb-btn primary" id="btn-save">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7.5L5.5 11 12 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Save
+      </button>
+      <button class="tb-btn" id="btn-signout" title="Sign out" style="padding:0 10px">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2H12a1 1 0 011 1v8a1 1 0 01-1 1H9M6 10l3-3-3-3M1 7h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="statusbar">Ready</div>
+
+  <div id="table-wrap">
+    <table id="habit-table">
+      <thead id="table-head"></thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Add Habit Modal ── -->
+<div id="overlay">
+  <div id="modal">
+    <h2>Add Habit</h2>
+    <div class="field">
+      <label>Category</label>
+      <input id="add-category" type="text" placeholder="e.g. Health, Mind, Work…" list="cat-list">
+      <datalist id="cat-list"></datalist>
+    </div>
+    <div class="field">
+      <label>Habit Item</label>
+      <input id="add-item" type="text" placeholder="e.g. Meditation, Running…">
+    </div>
+    <div class="field">
+      <label>Duration</label>
+      <input id="add-duration" type="text" placeholder="e.g. 10m, 30m, 1h">
+    </div>
+    <div class="modal-actions">
+      <button id="btn-cancel">Cancel</button>
+      <button id="btn-add">Add Habit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Context Menu ── -->
+<div id="ctx-menu">
+  <div class="ctx-item danger" id="ctx-delete">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3.5h10M5 3.5V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1M5.5 6v4M8.5 6v4M3 3.5l.7 7.5a.5.5 0 00.5.5h5.6a.5.5 0 00.5-.5L11 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Delete habit
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════════════════
+const TRACK_FILE   = 'habit-tracking.csv';
+const HABITS_FILE  = 'habit-list.csv';
+const ONEDRIVE_PATH = '/me/drive/root:/HabitTracker';  // folder in OneDrive
+const FUTURE_DAYS  = 30;
+
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+let msalInstance = null;
+let account = null;
+
+// habits: array of { id, category, item, duration, order, catOrder }
+let habits = [];
+
+// tracking: Map<dateStr, Map<habitId, value>>
+// value: 'no' | 'yes' | 'partially' | 'unknown' | 'deleted'
+let tracking = new Map();
+
+let dirty = false;
+let dragSrcColIndex = null;   // index into habits array
+let ctxHabitId = null;
+
+// Dates: today in centre, scroll past = earlier dates, scroll forward = later dates
+function todayStr() {
+  return localDateStr(new Date());
+}
+function localDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const dy = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dy}`;
+}
+function addDays(str, n) {
+  const d = new Date(str + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return localDateStr(d);
+}
+function fmtDate(str) {
+  const d = new Date(str + 'T00:00:00');
+  return d.getDate() + ' ' + d.toLocaleString('en-GB', {month:'short'});
+}
+
+// ════════════════════════════════════════════════════════
+//  CONFIG SCREEN
+// ════════════════════════════════════════════════════════
+const redirectUri = window.location.origin + window.location.pathname;
+document.getElementById('redirect-uri-display').textContent = redirectUri;
+
+function loadClientId() { return localStorage.getItem('ht_client_id') || ''; }
+function saveClientId(id) { localStorage.setItem('ht_client_id', id); }
+
+function initMSAL(clientId) {
+  msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: clientId,
+      authority: 'https://login.microsoftonline.com/common',
+      redirectUri: redirectUri,
+    },
+    cache: { cacheLocation: 'localStorage' },
+    system: { allowNativeBroker: false }
+  });
+}
+
+async function bootstrapAuth() {
+  const clientId = loadClientId();
+  if (!clientId) {
+    showScreen('config');
+    return;
+  }
+  initMSAL(clientId);
+  await msalInstance.initialize();
+  // Handle redirect response
+  try {
+    const resp = await msalInstance.handleRedirectPromise();
+    if (resp) account = resp.account;
+  } catch(e) { console.warn('Redirect handle:', e); }
+
+  if (!account) {
+    const accounts = msalInstance.getAllAccounts();
+    if (accounts.length > 0) account = accounts[0];
+  }
+
+  if (account) {
+    showScreen('loading');
+    setLoadingMsg('Loading habits…');
+    await loadData();
+    showScreen('app');
+  } else {
+    showScreen('login');
+  }
+}
+
+document.getElementById('btn-save-config').addEventListener('click', () => {
+  const v = document.getElementById('client-id-input').value.trim();
+  if (!v) return;
+  saveClientId(v);
+  bootstrapAuth();
+});
+
+document.getElementById('btn-reset-config').addEventListener('click', () => {
+  localStorage.removeItem('ht_client_id');
+  showScreen('config');
+});
+
+document.getElementById('btn-login').addEventListener('click', async () => {
+  await msalInstance.loginRedirect({
+    scopes: ['Files.ReadWrite', 'offline_access']
+  });
+});
+
+document.getElementById('btn-signout').addEventListener('click', () => {
+  msalInstance.logoutRedirect();
+});
+
+function showScreen(name) {
+  document.getElementById('config-screen').style.display  = name === 'config'  ? 'flex' : 'none';
+  document.getElementById('login-screen').style.display   = name === 'login'   ? 'flex' : 'none';
+  document.getElementById('loading-screen').style.display = name === 'loading' ? 'flex' : 'none';
+  document.getElementById('app').style.display            = name === 'app'     ? 'flex' : 'none';
+}
+
+function setLoadingMsg(m) { document.getElementById('loading-msg').textContent = m; }
+
+// ════════════════════════════════════════════════════════
+//  GRAPH API
+// ════════════════════════════════════════════════════════
+async function getToken() {
+  try {
+    const result = await msalInstance.acquireTokenSilent({
+      scopes: ['Files.ReadWrite'],
+      account: account
+    });
+    return result.accessToken;
+  } catch(e) {
+    const result = await msalInstance.acquireTokenRedirect({ scopes: ['Files.ReadWrite'] });
+    return result?.accessToken;
+  }
+}
+
+async function graphFetch(path, opts = {}) {
+  const token = await getToken();
+  const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    ...opts,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {})
+    }
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Graph ${res.status}: ${txt}`);
+  }
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('json')) return res.json();
+  return res.text();
+}
+
+async function ensureFolder() {
+  try {
+    await graphFetch(`${ONEDRIVE_PATH}`);
+  } catch(e) {
+    // create folder
+    await graphFetch('/me/drive/root/children', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'HabitTracker', folder: {}, '@microsoft.graph.conflictBehavior': 'replace' })
+    });
+  }
+}
+
+async function readFile(filename) {
+  try {
+    const url = await graphFetch(`${ONEDRIVE_PATH}/${filename}:/content`);
+    // graphFetch returns text for non-json
+    return url;
+  } catch(e) {
+    if (e.message.includes('404') || e.message.includes('itemNotFound')) return null;
+    throw e;
+  }
+}
+
+// Read file content (raw text)
+async function readFileContent(filename) {
+  const token = await getToken();
+  // First get download URL
+  let meta;
+  try {
+    meta = await graphFetch(`${ONEDRIVE_PATH}/${filename}`);
+  } catch(e) {
+    if (e.message.includes('404') || e.message.includes('itemNotFound')) return null;
+    throw e;
+  }
+  const dlUrl = meta['@microsoft.graph.downloadUrl'];
+  if (!dlUrl) return null;
+  const res = await fetch(dlUrl);
+  if (!res.ok) return null;
+  return res.text();
+}
+
+async function writeFile(filename, content) {
+  const token = await getToken();
+  const res = await fetch(`https://graph.microsoft.com/v1.0${ONEDRIVE_PATH}/${filename}:/content`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'text/plain'
+    },
+    body: content
+  });
+  if (!res.ok) throw new Error(`Write failed ${res.status}`);
+}
+
+// ════════════════════════════════════════════════════════
+//  CSV PARSING
+// ════════════════════════════════════════════════════════
+function parseCSV(text) {
+  if (!text) return [];
+  return text.trim().split('\n').map(line => {
+    // Simple CSV: handle quoted fields
+    const cols = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { cols.push(cur); cur = ''; }
+      else cur += c;
+    }
+    cols.push(cur);
+    return cols;
+  });
+}
+
+function csvEscape(v) {
+  if (v == null) return '';
+  const s = String(v);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g,'\\"')}"`;
+  return s;
+}
+
+function toCSV(rows) {
+  return rows.map(r => r.map(csvEscape).join(',')).join('\n');
+}
+
+// ════════════════════════════════════════════════════════
+//  LOAD DATA
+// ════════════════════════════════════════════════════════
+async function loadData() {
+  await ensureFolder();
+  const [habitsCSV, trackCSV] = await Promise.all([
+    readFileContent(HABITS_FILE),
+    readFileContent(TRACK_FILE)
+  ]);
+
+  habits = [];
+  tracking = new Map();
+
+  if (habitsCSV) {
+    // Format: id,category,item,duration,catOrder,itemOrder
+    const rows = parseCSV(habitsCSV);
+    rows.forEach(r => {
+      if (r.length < 6 || r[0] === 'id') return;
+      habits.push({
+        id: r[0], category: r[1], item: r[2], duration: r[3],
+        catOrder: parseInt(r[4]) || 0, itemOrder: parseInt(r[5]) || 0
+      });
+    });
+  }
+
+  if (trackCSV) {
+    // Row 0: categories header (col0='category', col1+= habit ids)
+    // Row 1: items
+    // Row 2: durations
+    // Row 3+: date rows
+    const rows = parseCSV(trackCSV);
+    if (rows.length >= 4) {
+      const headerRow = rows[0]; // ['category', id1, id2, ...]
+      const habitIds = headerRow.slice(1);
+
+      // If no habits file, derive from tracking file
+      if (habits.length === 0) {
+        const itemRow = rows[1].slice(1);
+        const durRow  = rows[2].slice(1);
+        const catRow  = rows[0].slice(1);
+        habitIds.forEach((id, i) => {
+          habits.push({ id, category: catRow[i] || '', item: itemRow[i] || id, duration: durRow[i] || '', catOrder: 0, itemOrder: i });
+        });
+      }
+
+      for (let r = 3; r < rows.length; r++) {
+        const dateStr = rows[r][0];
+        if (!dateStr) continue;
+        const dayMap = new Map();
+        habitIds.forEach((id, i) => {
+          dayMap.set(id, rows[r][i+1] || 'unknown');
+        });
+        tracking.set(dateStr, dayMap);
+      }
+    }
+  }
+
+  // Ensure today exists in tracking, backfill unknowns
+  const today = todayStr();
+  ensureTrackingForDate(today);
+
+  sortHabits();
+}
+
+function ensureTrackingForDate(dateStr) {
+  if (!tracking.has(dateStr)) {
+    const dayMap = new Map();
+    habits.forEach(h => dayMap.set(h.id, 'unknown'));
+    tracking.set(dateStr, dayMap);
+  } else {
+    // Ensure all habits have a value
+    const dayMap = tracking.get(dateStr);
+    habits.forEach(h => {
+      if (!dayMap.has(h.id)) dayMap.set(h.id, 'unknown');
+    });
+  }
+}
+
+function sortHabits() {
+  habits.sort((a, b) => {
+    if (a.catOrder !== b.catOrder) return a.catOrder - b.catOrder;
+    if (a.category < b.category) return -1;
+    if (a.category > b.category) return 1;
+    return a.itemOrder - b.itemOrder;
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  SAVE DATA
+// ════════════════════════════════════════════════════════
+async function saveData() {
+  setStatus('Saving…', '');
+  try {
+    await ensureFolder();
+
+    // ── habits CSV ──
+    const habitsRows = [['id','category','item','duration','catOrder','itemOrder']];
+    habits.forEach(h => {
+      habitsRows.push([h.id, h.category, h.item, h.duration, h.catOrder, h.itemOrder]);
+    });
+
+    // ── tracking CSV ──
+    // Header row: category row, item row, duration row
+    const visibleHabits = getVisibleHabits();
+    const catRow    = ['category', ...visibleHabits.map(h => h.category)];
+    const itemRow   = ['item',     ...visibleHabits.map(h => h.item)];
+    const durRow    = ['duration', ...visibleHabits.map(h => h.duration)];
+    // Also include deleted habits so history is preserved
+    const allHabits = habits;
+
+    const trackHeader = ['category', ...allHabits.map(h => h.id)];
+    const trackItem   = ['item',     ...allHabits.map(h => h.item)];
+    const trackDur    = ['duration', ...allHabits.map(h => h.duration)];
+
+    const trackRows = [trackHeader, trackItem, trackDur];
+
+    // All dates sorted
+    const allDates = Array.from(tracking.keys()).sort();
+    allDates.forEach(d => {
+      const dayMap = tracking.get(d);
+      const row = [d, ...allHabits.map(h => dayMap.get(h.id) || 'unknown')];
+      trackRows.push(row);
+    });
+
+    await Promise.all([
+      writeFile(HABITS_FILE, toCSV(habitsRows)),
+      writeFile(TRACK_FILE,  toCSV(trackRows))
+    ]);
+
+    dirty = false;
+    document.getElementById('unsaved-dot').classList.remove('show');
+    setStatus('Saved ✓', 'ok');
+    setTimeout(() => setStatus('Ready', ''), 2000);
+  } catch(e) {
+    setStatus('Save failed: ' + e.message, 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  UI HELPERS
+// ════════════════════════════════════════════════════════
+function setStatus(msg, cls) {
+  const el = document.getElementById('statusbar');
+  el.textContent = msg;
+  el.className = cls;
+}
+
+function markDirty() {
+  dirty = true;
+  document.getElementById('unsaved-dot').classList.add('show');
+}
+
+function getVisibleHabits() {
+  return habits.filter(h => !isFullyDeleted(h.id));
+}
+
+function isFullyDeleted(habitId) {
+  // A habit is "deleted" if the most recent tracking value is 'deleted'
+  const today = todayStr();
+  const dayMap = tracking.get(today);
+  if (!dayMap) return false;
+  return dayMap.get(habitId) === 'deleted';
+}
+
+// Generate date list: from earliest tracked date up to today+30
+function getDateList() {
+  const today = todayStr();
+  // Earliest date in tracking
+  const allDates = Array.from(tracking.keys()).sort();
+  const earliest = allDates.length > 0 ? allDates[0] : today;
+
+  const dates = [];
+  let d = earliest;
+  const end = addDays(today, FUTURE_DAYS);
+  while (d <= end) {
+    dates.push(d);
+    d = addDays(d, 1);
+  }
+  return dates;
+}
+
+// ════════════════════════════════════════════════════════
+//  CELL STATE CYCLE
+// ════════════════════════════════════════════════════════
+const CYCLE = ['no', 'yes', 'partially'];
+
+function cycleValue(current) {
+  const idx = CYCLE.indexOf(current);
+  if (idx === -1) return 'yes'; // from unknown → yes
+  return CYCLE[(idx + 1) % CYCLE.length];
+}
+
+// ── Icons ──
+function iconHTML(value) {
+  switch(value) {
+    case 'yes':
+      return `<span class="cell-icon icon-yes">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M7 11.2l2.8 2.8 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg></span>`;
+    case 'partially':
+      return `<span class="cell-icon icon-part">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M4 9.2l3.2 3.2 6.4-6.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg></span>`;
+    case 'no':
+      return `<span class="cell-icon icon-no">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg></span>`;
+    case 'unknown':
+      return `<span class="cell-icon icon-unk">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M4 8h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg></span>`;
+    case 'deleted':
+      return `<span class="cell-icon icon-del">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".4"/>
+        </svg></span>`;
+    default:
+      return '';
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  RENDER TABLE
+// ════════════════════════════════════════════════════════
+function renderTable() {
+  const today = todayStr();
+  const visible = getVisibleHabits();
+  const dates = getDateList();
+
+  // Ensure all dates have tracking entries
+  dates.forEach(d => ensureTrackingForDate(d));
+
+  // ── Build category spans ──
+  const catSpans = [];
+  let i = 0;
+  while (i < visible.length) {
+    const cat = visible[i].category;
+    let span = 0;
+    while (i + span < visible.length && visible[i + span].category === cat) span++;
+    catSpans.push({ cat, start: i, span });
+    i += span;
+  }
+
+  // ── THEAD ──
+  const thead = document.getElementById('table-head');
+  thead.innerHTML = '';
+
+  // Row 1: Category
+  const catRow = document.createElement('tr');
+  catRow.className = 'row-header';
+  const labelCat = document.createElement('th');
+  labelCat.className = 'col-label';
+  labelCat.textContent = 'Category';
+  catRow.appendChild(labelCat);
+
+  catSpans.forEach(cs => {
+    const th = document.createElement('th');
+    th.colSpan = cs.span;
+    th.className = 'col-data cat-header-cell';
+    th.textContent = cs.cat;
+    catRow.appendChild(th);
+  });
+  thead.appendChild(catRow);
+
+  // Row 2: Item
+  const itemRow = document.createElement('tr');
+  itemRow.className = 'row-header';
+  const labelItem = document.createElement('th');
+  labelItem.className = 'col-label';
+  labelItem.textContent = 'Habit';
+  itemRow.appendChild(labelItem);
+
+  visible.forEach((h, idx) => {
+    const th = document.createElement('th');
+    th.className = 'col-data item-header-cell';
+    th.textContent = h.item;
+    th.draggable = true;
+    th.dataset.idx = idx;
+    th.dataset.habitId = h.id;
+
+    // Drag events (reorder within category)
+    th.addEventListener('dragstart', onDragStart);
+    th.addEventListener('dragover',  onDragOver);
+    th.addEventListener('dragleave', onDragLeave);
+    th.addEventListener('drop',      onDrop);
+    th.addEventListener('dragend',   onDragEnd);
+
+    // Long press → context menu (for touch)
+    th.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, h.id);
+    });
+    addLongPress(th, () => showContextMenu(th.getBoundingClientRect().left + 20, th.getBoundingClientRect().bottom, h.id));
+
+    itemRow.appendChild(th);
+  });
+  thead.appendChild(itemRow);
+
+  // Row 3: Duration
+  const durRow = document.createElement('tr');
+  durRow.className = 'row-header';
+  const labelDur = document.createElement('th');
+  labelDur.className = 'col-label';
+  labelDur.textContent = 'Duration';
+  durRow.appendChild(labelDur);
+
+  visible.forEach(h => {
+    const th = document.createElement('th');
+    th.className = 'col-data dur-header-cell';
+    th.textContent = h.duration;
+    durRow.appendChild(th);
+  });
+  thead.appendChild(durRow);
+
+  // ── TBODY ──
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+
+  dates.forEach(d => {
+    const isToday  = d === today;
+    const isFuture = d > today;
+    const dayMap   = tracking.get(d) || new Map();
+
+    const tr = document.createElement('tr');
+    tr.className = 'row-date';
+
+    // Label cell
+    const labelTd = document.createElement('td');
+    labelTd.className = 'col-label date-cell' + (isToday ? ' today' : isFuture ? ' future' : '');
+    labelTd.textContent = isToday ? 'Today · ' + fmtDate(d) : fmtDate(d);
+    tr.appendChild(labelTd);
+
+    visible.forEach(h => {
+      const val = dayMap.get(h.id) || 'unknown';
+      const td = document.createElement('td');
+      td.className = 'col-data habit-cell' + (isToday ? ' today-col' : '');
+      td.dataset.date = d;
+      td.dataset.habitId = h.id;
+      td.innerHTML = iconHTML(val);
+
+      td.addEventListener('click', onCellClick);
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  // Scroll to today row
+  requestAnimationFrame(() => {
+    const todayRow = tbody.querySelector('.today-col');
+    if (todayRow) {
+      const wrap = document.getElementById('table-wrap');
+      const headerH = 108; // 3 * 36
+      const rowTop = todayRow.parentElement.offsetTop;
+      wrap.scrollTop = rowTop - headerH - 8;
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  CELL CLICK
+// ════════════════════════════════════════════════════════
+function onCellClick(e) {
+  const td = e.currentTarget;
+  const date = td.dataset.date;
+  const habitId = td.dataset.habitId;
+
+  if (!tracking.has(date)) tracking.set(date, new Map());
+  const dayMap = tracking.get(date);
+  const cur = dayMap.get(habitId) || 'no';
+  const next = cycleValue(cur);
+  dayMap.set(habitId, next);
+
+  td.innerHTML = iconHTML(next);
+  markDirty();
+}
+
+// ════════════════════════════════════════════════════════
+//  DRAG & DROP (reorder columns within category)
+// ════════════════════════════════════════════════════════
+function onDragStart(e) {
+  dragSrcColIndex = parseInt(e.currentTarget.dataset.idx);
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drag-over');
+}
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+function onDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const targetIdx = parseInt(e.currentTarget.dataset.idx);
+  if (dragSrcColIndex === null || dragSrcColIndex === targetIdx) return;
+
+  const visible = getVisibleHabits();
+  const src = visible[dragSrcColIndex];
+  const tgt = visible[targetIdx];
+
+  // Only allow within same category
+  if (src.category !== tgt.category) return;
+
+  // Swap itemOrder values
+  [src.itemOrder, tgt.itemOrder] = [tgt.itemOrder, src.itemOrder];
+  sortHabits();
+  markDirty();
+  renderTable();
+}
+function onDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  dragSrcColIndex = null;
+}
+
+// ── Long press for touch drag replacement ──
+function addLongPress(el, cb) {
+  let timer;
+  el.addEventListener('touchstart', () => { timer = setTimeout(cb, 600); }, { passive: true });
+  el.addEventListener('touchend',   () => clearTimeout(timer), { passive: true });
+  el.addEventListener('touchmove',  () => clearTimeout(timer), { passive: true });
+}
+
+// ════════════════════════════════════════════════════════
+//  CONTEXT MENU (delete)
+// ════════════════════════════════════════════════════════
+function showContextMenu(x, y, habitId) {
+  ctxHabitId = habitId;
+  const menu = document.getElementById('ctx-menu');
+  menu.classList.add('show');
+  // Keep on screen
+  const mx = Math.min(x, window.innerWidth - 170);
+  const my = Math.min(y, window.innerHeight - 80);
+  menu.style.left = mx + 'px';
+  menu.style.top  = my + 'px';
+}
+
+document.addEventListener('click', () => {
+  document.getElementById('ctx-menu').classList.remove('show');
+});
+
+document.getElementById('ctx-delete').addEventListener('click', () => {
+  if (!ctxHabitId) return;
+  deleteHabit(ctxHabitId);
+  ctxHabitId = null;
+});
+
+function deleteHabit(habitId) {
+  const today = todayStr();
+  const dates = getDateList();
+  // Mark 'deleted' for today and all future dates
+  dates.forEach(d => {
+    if (d >= today) {
+      if (!tracking.has(d)) tracking.set(d, new Map());
+      tracking.get(d).set(habitId, 'deleted');
+    }
+  });
+  markDirty();
+  renderTable();
+}
+
+// ════════════════════════════════════════════════════════
+//  ADD HABIT MODAL
+// ════════════════════════════════════════════════════════
+document.getElementById('btn-add-habit').addEventListener('click', () => {
+  // Populate category suggestions
+  const cats = [...new Set(habits.map(h => h.category))];
+  const dl = document.getElementById('cat-list');
+  dl.innerHTML = cats.map(c => `<option value="${c}">`).join('');
+  document.getElementById('add-category').value = '';
+  document.getElementById('add-item').value = '';
+  document.getElementById('add-duration').value = '';
+  document.getElementById('overlay').classList.add('show');
+  setTimeout(() => document.getElementById('add-category').focus(), 100);
+});
+
+document.getElementById('btn-cancel').addEventListener('click', closeModal);
+document.getElementById('overlay').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('overlay')) closeModal();
+});
+
+function closeModal() {
+  document.getElementById('overlay').classList.remove('show');
+}
+
+document.getElementById('btn-add').addEventListener('click', () => {
+  const cat  = document.getElementById('add-category').value.trim();
+  const item = document.getElementById('add-item').value.trim();
+  const dur  = document.getElementById('add-duration').value.trim();
+  if (!cat || !item) return;
+
+  // Determine catOrder
+  const existingCats = [...new Set(habits.map(h => h.category))];
+  let catOrder = existingCats.indexOf(cat);
+  if (catOrder === -1) catOrder = existingCats.length;
+
+  // Determine itemOrder within category
+  const catHabits = habits.filter(h => h.category === cat);
+  const itemOrder = catHabits.length;
+
+  const id = 'h' + Date.now();
+  habits.push({ id, category: cat, item, duration: dur, catOrder, itemOrder });
+  sortHabits();
+
+  // Add 'unknown' for all existing dates
+  tracking.forEach((dayMap, d) => {
+    dayMap.set(id, 'unknown');
+  });
+
+  closeModal();
+  markDirty();
+  renderTable();
+});
+
+// ════════════════════════════════════════════════════════
+//  SAVE BUTTON
+// ════════════════════════════════════════════════════════
+document.getElementById('btn-save').addEventListener('click', saveData);
+
+// ════════════════════════════════════════════════════════
+//  BOOTSTRAP
+// ════════════════════════════════════════════════════════
+bootstrapAuth();
+</script>
+</body>
+</html>
