@@ -638,14 +638,14 @@ async function ensureFolder() {
     // create folder
     await graphFetch('/me/drive/root/children', {
       method: 'POST',
-      body: JSON.stringify({ name: 'HabitTracker', folder: {}, '@microsoft.graph.conflictBehavior': 'replace' })
+      body: JSON.stringify({ name: 'App_HabitTracker', folder: {}, '@microsoft.graph.conflictBehavior': 'replace' })
     });
   }
 }
 
 async function readFile(filename) {
   try {
-    const url = await graphFetch(`${ONEDRIVE_PATH}/${filename}:/content`);
+    const url = await graphFetch(`${ONEDRIVE_PATH}/${filenam}:/content`);
     // graphFetch returns text for non-json
     return url;
   } catch(e) {
