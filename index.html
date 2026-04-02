@@ -556,12 +556,26 @@ async function bootstrapAuth() {
   }
 
   if (account) {
-    showScreen('loading');
-    setLoadingMsg('Loading habits…');
+      await loadAndShow();
+    } else {
+      showScreen('login');
+    }
+  } catch(e) {
+    showError('Startup error: ' + e.message);
+  }
+}
+
+async function loadAndShow() {
+  showScreen('loading');
+  setLoadingMsg('Loading habits…');
+  try {
     await loadData();
     showScreen('app');
-  } else {
-    showScreen('login');
+    renderTable();
+    setStatus(`Loaded ${habits.length} habit(s)`, 'ok');
+    setTimeout(() => setStatus('Ready', ''), 3000);
+  } catch(e) {
+    showError('Failed to load data: ' + e.message);
   }
 }
 
