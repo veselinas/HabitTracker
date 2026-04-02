@@ -568,8 +568,6 @@ async function bootstrapAuth() {
 }
 
 async function loadAndShow() {
-  showScreen('loading');
-  setLoadingMsg('Loading habits…');
   try {
     await loadData();
     showScreen('app');
