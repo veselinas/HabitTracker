@@ -381,8 +381,105 @@
   #table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
   #table-wrap::-webkit-scrollbar-track { background: var(--bg); }
   #table-wrap::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+  /* ── Print styles ── */
+@media print {
+  body * { visibility: hidden; }
+  #print-area, #print-area * { visibility: visible; }
+  #print-area {
+    position: absolute;
+    inset: 0;
+    padding: 20px;
+    background: white;
+  }
+}
+
+#print-area {
+  display: none;
+  font-family: 'DM Sans', sans-serif;
+  background: white;
+  color: #000;
+}
+
+#print-area h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+#print-area .print-subtitle {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 16px;
+}
+
+#print-area table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+
+#print-area th, #print-area td {
+  border: 1px solid #ccc;
+  text-align: center;
+  vertical-align: middle;
+  padding: 0;
+  font-size: 9px;
+}
+
+/* Habit name column */
+#print-area .p-label {
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Date header cells */
+#print-area .p-date-header {
+  width: 18px;
+  font-size: 7px;
+  color: #333;
+  padding: 2px 0;
+  font-weight: 600;
+}
+#print-area .p-date-header.weekend {
+  background: #f5f5f5;
+}
+#print-area .p-date-header.today-print {
+  background: #e8f0ff;
+}
+
+/* Checkbox cells */
+#print-area .p-cell {
+  height: 20px;
+  width: 18px;
+}
+#print-area .p-cell.weekend {
+  background: #fafafa;
+}
+#print-area .p-cell.today-print {
+  background: #f0f4ff;
+}
+
+/* Category group header row */
+#print-area .p-cat-row td {
+  background: #f0f0f0;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 2px 6px;
+  color: #333;
+  border-bottom: 2px solid #999;
+}
 </style>
 </head>
+  
 <body>
 
 <!-- ── Config Screen (first run) ── -->
@@ -416,6 +513,12 @@
       Add
     </button>
     <h1>Habits</h1>
+    <button class="tb-btn" id="btn-print" title="Print month">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M3 5V1.5h8V5M3 10.5H1.5A.5.5 0 011 10V6a.5.5 0 01.5-.5h11a.5.5 0 01.5.5v4a.5.5 0 01-.5.5H11M3 8h8v4.5H3V8z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      Print
+    </button>
     <div style="display:flex;align-items:center;gap:8px">
       <div id="unsaved-dot" title="Unsaved changes"></div>
       <button class="tb-btn primary" id="btn-save">
@@ -1255,9 +1358,95 @@ document.getElementById('btn-add').addEventListener('click', () => {
 document.getElementById('btn-save').addEventListener('click', saveData);
 
 // ════════════════════════════════════════════════════════
+//  PRINT
+// ════════════════════════════════════════════════════════
+document.getElementById('btn-print').addEventListener('click', () => {
+  const now        = new Date();
+  const year       = now.getFullYear();
+  const month      = now.getMonth();           // 0-indexed
+  const today      = todayStr();
+  const monthName  = now.toLocaleString('en-GB', { month: 'long' });
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Build array of day objects for the month
+  const days = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateObj = new Date(year, month, d);
+    const dateStr = localDateStr(dateObj);
+    const dow     = dateObj.getDay(); // 0=Sun, 6=Sat
+    days.push({ d, dateStr, isWeekend: dow === 0 || dow === 6, isToday: dateStr === today });
+  }
+
+  // Group visible habits by category (preserving sort order)
+  const visible = getVisibleHabits();
+  const catOrder = [];
+  const byCategory = {};
+  visible.forEach(h => {
+    if (!byCategory[h.category]) {
+      catOrder.push(h.category);
+      byCategory[h.category] = [];
+    }
+    byCategory[h.category].push(h);
+  });
+
+  // ── Build HTML ──
+  let html = `
+    <h1>${monthName} ${year}</h1>
+    <div class="print-subtitle">Habit tracker · printed ${fmtDate(today)}</div>
+    <table>
+      <thead>
+        <tr>
+          <th class="p-label"></th>
+          ${days.map(day => `
+            <th class="p-date-header${day.isWeekend ? ' weekend' : ''}${day.isToday ? ' today-print' : ''}">
+              ${day.d}
+            </th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>`;
+
+  catOrder.forEach(cat => {
+    // Category header row
+    html += `<tr class="p-cat-row">
+      <td colspan="${daysInMonth + 1}">${cat}</td>
+    </tr>`;
+
+    byCategory[cat].forEach(h => {
+      html += `<tr>
+        <td class="p-label" title="${h.item}${h.duration ? ' · ' + h.duration : ''}">${h.item}${h.duration ? ' <span style="color:#888;font-size:8px">' + h.duration + '</span>' : ''}</td>
+        ${days.map(day => {
+          const dayMap = tracking.get(day.dateStr);
+          const val    = dayMap ? dayMap.get(h.id) : 'unknown';
+          // Pre-fill existing tracked values as symbols
+          let fill = '';
+          if (val === 'yes')       fill = '✓';
+          else if (val === 'partially') fill = '~';
+          else if (val === 'no')   fill = '✗';
+          // future/unknown = empty checkbox
+          return `<td class="p-cell${day.isWeekend ? ' weekend' : ''}${day.isToday ? ' today-print' : ''}" style="font-size:9px">${fill}</td>`;
+        }).join('')}
+      </tr>`;
+    });
+  });
+
+  html += `</tbody></table>`;
+
+  // Inject and print
+  const area = document.getElementById('print-area');
+  area.innerHTML = html;
+  area.style.display = 'block';
+  window.print();
+  area.style.display = 'none';
+  area.innerHTML = '';
+});
+
+  
+// ════════════════════════════════════════════════════════
 //  BOOTSTRAP
 // ════════════════════════════════════════════════════════
 bootstrapAuth();
 </script>
+
+<div id="print-area"></div>  
 </body>
 </html>
