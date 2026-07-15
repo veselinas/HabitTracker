@@ -104,6 +104,51 @@
   #statusbar.error { color: var(--red); }
   #statusbar.ok    { color: var(--green); }
 
+  /* ── Schedule filter bar ── */
+  #schedule-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #schedule-bar::-webkit-scrollbar { display: none; }
+
+  #schedule-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+  }
+
+  #schedule-tabs {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .sched-tab {
+    background: var(--muted);
+    border: none;
+    border-radius: 20px;
+    color: var(--text-dim);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    padding: 4px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s, color .15s;
+  }
+  .sched-tab.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
   /* ── Table wrapper ── */
   #table-wrap {
     flex: 1;
@@ -538,6 +583,18 @@
   </div>
   <div id="statusbar">Ready</div>
 
+  <div id="schedule-bar">
+    <span id="schedule-label">Schedule</span>
+    <div id="schedule-tabs">
+      <button class="sched-tab active" data-sched="all">All</button>
+      <button class="sched-tab" data-sched="morning">Morning</button>
+      <button class="sched-tab" data-sched="afternoon">Afternoon</button>
+      <button class="sched-tab" data-sched="evening">Evening</button>
+      <button class="sched-tab" data-sched="night">Night</button>
+      <button class="sched-tab" data-sched="other">Other</button>
+    </div>
+  </div>
+  
   <div id="table-wrap">
     <table id="habit-table">
       <thead id="table-head"></thead>
@@ -562,6 +619,16 @@
     <div class="field">
       <label>Duration</label>
       <input id="add-duration" type="text" placeholder="e.g. 10m, 30m, 1h">
+    </div>
+    <div class="field">
+      <label>Schedule</label>
+      <select id="add-schedule">
+        <option value="morning">Morning</option>
+        <option value="afternoon">Afternoon</option>
+        <option value="evening">Evening</option>
+        <option value="night">Night</option>
+        <option value="other" selected>Other</option>
+      </select>
     </div>
     <div class="modal-actions">
       <button id="btn-cancel">Cancel</button>
@@ -603,6 +670,7 @@ let tracking = new Map();
 let dirty = false;
 let dragSrcColIndex = null;   // index into habits array
 let ctxHabitId = null;
+let activeSchedule = 'all';
 
 // Dates: today in centre, scroll past = earlier dates, scroll forward = later dates
 function todayStr() {
@@ -855,8 +923,13 @@ async function loadData() {
     rows.forEach(r => {
       if (r.length < 6 || r[0] === 'id') return;
       habits.push({
-        id: r[0], category: r[1], item: r[2], duration: r[3],
-        catOrder: parseInt(r[4]) || 0, itemOrder: parseInt(r[5]) || 0
+        id:        r[0],
+        category:  r[1] || '',
+        item:      r[2] || r[0],
+        duration:  r[3] || '',
+        catOrder:  parseInt(r[4]) || 0,
+        itemOrder: parseInt(r[5]) || 0,
+        schedule:  r[6] || 'other'
       });
     });
   }
@@ -877,7 +950,15 @@ async function loadData() {
         const durRow  = rows[2].slice(1);
         const catRow  = rows[0].slice(1);
         habitIds.forEach((id, i) => {
-          habits.push({ id, category: catRow[i] || '', item: itemRow[i] || id, duration: durRow[i] || '', catOrder: 0, itemOrder: i });
+          habits.push({
+            id,
+            category:  catRow[i]  || 'Habits',
+            item:      itemRow[i] || id,
+            duration:  durRow[i]  || '',
+            catOrder:  0,
+            itemOrder: i,
+            schedule:  'other'
+          });
         });
       }
 
@@ -932,9 +1013,9 @@ async function saveData() {
     await ensureFolder();
 
     // ── habits CSV ──
-    const habitsRows = [['id','category','item','duration','catOrder','itemOrder']];
+    const habitsRows = [['id','category','item','duration','catOrder','itemOrder','schedule']];
     habits.forEach(h => {
-      habitsRows.push([h.id, h.category, h.item, h.duration, h.catOrder, h.itemOrder]);
+      habitsRows.push([h.id, h.category, h.item, h.duration, h.catOrder, h.itemOrder, h.schedule || 'other']);
     });
 
     // ── tracking CSV ──
@@ -989,7 +1070,11 @@ function markDirty() {
 }
 
 function getVisibleHabits() {
-  return habits.filter(h => !isFullyDeleted(h.id));
+  return habits.filter(h => {
+    if (isFullyDeleted(h.id)) return false;
+    if (activeSchedule !== 'all' && h.schedule !== activeSchedule) return false;
+    return true;
+  });
 }
 
 function isFullyDeleted(habitId) {
@@ -1316,6 +1401,7 @@ document.getElementById('btn-add-habit').addEventListener('click', () => {
   document.getElementById('add-category').value = '';
   document.getElementById('add-item').value = '';
   document.getElementById('add-duration').value = '';
+  document.getElementById('add-schedule').value = 'other';
   document.getElementById('overlay').classList.add('show');
   setTimeout(() => document.getElementById('add-category').focus(), 100);
 });
@@ -1330,11 +1416,12 @@ function closeModal() {
 }
 
 document.getElementById('btn-add').addEventListener('click', () => {
-  const cat  = document.getElementById('add-category').value.trim();
-  const item = document.getElementById('add-item').value.trim();
-  const dur  = document.getElementById('add-duration').value.trim();
+  const cat      = document.getElementById('add-category').value.trim();
+  const item     = document.getElementById('add-item').value.trim();
+  const dur      = document.getElementById('add-duration').value.trim();
+  const schedule = document.getElementById('add-schedule').value;
   if (!cat || !item) return;
-
+  
   // Determine catOrder
   const existingCats = [...new Set(habits.map(h => h.category))];
   let catOrder = existingCats.indexOf(cat);
@@ -1345,7 +1432,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
   const itemOrder = catHabits.length;
 
   const id = 'h' + Date.now();
-  habits.push({ id, category: cat, item, duration: dur, catOrder, itemOrder });
+  habits.push({ id, category: cat, item, duration: dur, catOrder, itemOrder, schedule });
   sortHabits();
 
   // Add 'unknown' for all existing dates
@@ -1383,16 +1470,15 @@ document.getElementById('btn-print').addEventListener('click', () => {
     days.push({ d, dateStr, isWeekend: dow === 0 || dow === 6, isToday: dateStr === today });
   }
 
-  // Group visible habits by category (preserving sort order)
-  const visible = getVisibleHabits();
-  const catOrder = [];
-  const byCategory = {};
-  visible.forEach(h => {
-    if (!byCategory[h.category]) {
-      catOrder.push(h.category);
-      byCategory[h.category] = [];
-    }
-    byCategory[h.category].push(h);
+  const SCHEDULE_ORDER = ['morning', 'afternoon', 'evening', 'night', 'other'];
+
+  // Group by schedule → category
+  const bySchedule = {};
+  SCHEDULE_ORDER.forEach(s => { bySchedule[s] = {}; });
+  getVisibleHabits().forEach(h => {
+    const sched = h.schedule || 'other';
+    if (!bySchedule[sched][h.category]) bySchedule[sched][h.category] = [];
+    bySchedule[sched][h.category].push(h);
   });
 
   // ── Build HTML ──
@@ -1411,28 +1497,44 @@ document.getElementById('btn-print').addEventListener('click', () => {
       </thead>
       <tbody>`;
 
-  catOrder.forEach(cat => {
-    // Category header row
-    html += `<tr class="p-cat-row">
-      <td colspan="${daysInMonth + 1}">${cat}</td>
-    </tr>`;
+  SCHEDULE_ORDER.forEach(sched => {
+    const cats = bySchedule[sched];
+    const catKeys = Object.keys(cats);
+    if (catKeys.length === 0) return;
 
-    byCategory[cat].forEach(h => {
-      html += `<tr>
-        <td class="p-label" title="${h.item}${h.duration ? ' · ' + h.duration : ''}">${h.item}${h.duration ? ' <span style="color:#888;font-size:8px">' + h.duration + '</span>' : ''}</td>
-        ${days.map(day => {
-          const dayMap = tracking.get(day.dateStr);
-          const val    = dayMap ? dayMap.get(h.id) : 'unknown';
-          // Pre-fill existing tracked values as symbols
-          let fill = '';
-          if (val === 'yes')       fill = '✓';
-          else if (val === 'partially') fill = '~';
-          else if (val === 'no')   fill = '✗';
-          // future/unknown = empty checkbox
-          return `<td class="p-cell${day.isWeekend ? ' weekend' : ''}${day.isToday ? ' today-print' : ''}" style="font-size:9px">${fill}</td>`;
-        }).join('')}
-      </tr>`;
+    // Schedule group header
+    html += `<tr><td colspan="${daysInMonth + 1}" style="
+      background:#7a9e7a;color:white;font-weight:700;font-size:10px;
+      text-transform:uppercase;letter-spacing:.08em;padding:3px 6px;
+      border-bottom:2px solid #5a7e5a;
+    ">${sched}</td></tr>`;
+
+    catKeys.forEach(cat => {
+      html += `<tr class="p-cat-row"><td colspan="${daysInMonth + 1}">${cat}</td></tr>`;
+
+      cats[cat].forEach(h => {
+        html += `<tr>
+          <td class="p-label">${h.item}${h.duration ? ' <span style="color:#888;font-size:8px">' + h.duration + '</span>' : ''}</td>
+          ${days.map(day => {
+            const dayMap = tracking.get(day.dateStr);
+            const val = dayMap ? dayMap.get(h.id) : 'unknown';
+            let fill = '';
+            if (val === 'yes')            fill = '✓';
+            else if (val === 'partially') fill = '~';
+            else if (val === 'no')        fill = '✗';
+            return `<td class="p-cell${day.isWeekend ? ' weekend' : ''}${day.isToday ? ' today-print' : ''}">${fill}</td>`;
+          }).join('')}
+        </tr>`;
+      });
     });
+
+    // 3 blank rows at bottom of each schedule group
+    for (let i = 0; i < 3; i++) {
+      html += `<tr>
+        <td class="p-label" style="border-top:1px dashed #ccc"></td>
+        ${days.map(day => `<td class="p-cell${day.isWeekend ? ' weekend' : ''}${day.isToday ? ' today-print' : ''}" style="border-top:1px dashed #ccc"></td>`).join('')}
+      </tr>`;
+    }
   });
 
   html += `</tbody></table>`;
@@ -1447,6 +1549,18 @@ document.getElementById('btn-print').addEventListener('click', () => {
 });
 
   
+// ════════════════════════════════════════════════════════
+//  SCHEDULE FILTER
+// ════════════════════════════════════════════════════════
+document.querySelectorAll('.sched-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activeSchedule = btn.dataset.sched;
+    document.querySelectorAll('.sched-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable();
+  });
+});
+
 // ════════════════════════════════════════════════════════
 //  BOOTSTRAP
 // ════════════════════════════════════════════════════════
