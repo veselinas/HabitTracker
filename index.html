@@ -467,8 +467,13 @@
   border-collapse: collapse;
   width: 100%;
   table-layout: fixed;
+  page-break-inside: auto;
 }
 
+#print-area tr {
+  page-break-inside: avoid;
+  page-break-after: auto;
+}
 #print-area th, #print-area td {
   border: 1px solid #ccc;
   text-align: center;
