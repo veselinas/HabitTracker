@@ -635,6 +635,14 @@
         <option value="other" selected>Other</option>
       </select>
     </div>
+    <div class="field">
+      <label>Priority</label>
+      <select id="add-priority">
+        <option value="high">!! High</option>
+        <option value="medium">! Medium</option>
+        <option value="low" selected>Low</option>
+      </select>
+    </div>
     <div class="modal-actions">
       <button id="btn-cancel">Cancel</button>
       <button id="btn-add">Add Habit</button>
@@ -934,7 +942,8 @@ async function loadData() {
         duration:  r[3] || '',
         catOrder:  parseInt(r[4]) || 0,
         itemOrder: parseInt(r[5]) || 0,
-        schedule:  r[6] || 'other'
+        schedule:  r[6] || 'other',
+        priority:  r[7] || 'low'
       });
     });
   }
@@ -962,7 +971,8 @@ async function loadData() {
             duration:  durRow[i]  || '',
             catOrder:  0,
             itemOrder: i,
-            schedule:  'other'
+            schedule:  'other',
+            priority:  'low'
           });
         });
       }
@@ -1018,9 +1028,9 @@ async function saveData() {
     await ensureFolder();
 
     // ── habits CSV ──
-    const habitsRows = [['id','category','item','duration','catOrder','itemOrder','schedule']];
+    const habitsRows = [['id','category','item','duration','catOrder','itemOrder','schedule','priority']];
     habits.forEach(h => {
-      habitsRows.push([h.id, h.category, h.item, h.duration, h.catOrder, h.itemOrder, h.schedule || 'other']);
+      habitsRows.push([h.id, h.category, h.item, h.duration, h.catOrder, h.itemOrder, h.schedule || 'other', h.priority || 'low']);
     });
 
     // ── tracking CSV ──
@@ -1105,6 +1115,15 @@ function getDateList() {
     d = addDays(d, 1);
   }
   return dates;
+}
+
+// ════════════════════════════════════════════════════════
+//  PRIORITY PREFIX
+// ════════════════════════════════════════════════════════
+function priorityPrefix(priority) {
+  if (priority === 'high')   return '!! ';
+  if (priority === 'medium') return '! ';
+  return '';
 }
 
 // ════════════════════════════════════════════════════════
@@ -1407,6 +1426,7 @@ document.getElementById('btn-add-habit').addEventListener('click', () => {
   document.getElementById('add-item').value = '';
   document.getElementById('add-duration').value = '';
   document.getElementById('add-schedule').value = 'other';
+  document.getElementById('add-priority').value = 'low';
   document.getElementById('overlay').classList.add('show');
   setTimeout(() => document.getElementById('add-category').focus(), 100);
 });
@@ -1425,6 +1445,8 @@ document.getElementById('btn-add').addEventListener('click', () => {
   const item     = document.getElementById('add-item').value.trim();
   const dur      = document.getElementById('add-duration').value.trim();
   const schedule = document.getElementById('add-schedule').value;
+  const priority = document.getElementById('add-priority').value;
+  if (!cat || !item) return;
   if (!cat || !item) return;
   
   // Determine catOrder
@@ -1437,7 +1459,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
   const itemOrder = catHabits.length;
 
   const id = 'h' + Date.now();
-  habits.push({ id, category: cat, item, duration: dur, catOrder, itemOrder, schedule });
+  habits.push({ id, category: cat, item, duration: dur, catOrder, itemOrder, schedule, priority });
   sortHabits();
 
   // Add 'unknown' for all existing dates
@@ -1518,8 +1540,8 @@ document.getElementById('btn-print').addEventListener('click', () => {
       html += `<tr class="p-cat-row"><td colspan="${daysInMonth + 1}">${cat}</td></tr>`;
 
       cats[cat].forEach(h => {
-        html += `<tr>
-          <td class="p-label">${h.item}${h.duration ? ' <span style="color:#888;font-size:8px">' + h.duration + '</span>' : ''}</td>
+          html += `<tr>
+            <td class="p-label">${priorityPrefix(h.priority)}${h.item}${h.duration ? ' <span style="color:#888;font-size:8px">' + h.duration + '</span>' : ''}</td>
           ${days.map(day => {
             const dayMap = tracking.get(day.dateStr);
             const val = dayMap ? dayMap.get(h.id) : 'unknown';
