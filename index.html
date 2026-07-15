@@ -1225,7 +1225,7 @@ function renderTable() {
   visible.forEach((h, idx) => {
     const th = document.createElement('th');
     th.className = 'col-data item-header-cell';
-    th.textContent = h.item;
+    th.textContent = priorityPrefix(h.priority) + h.item;
     th.draggable = true;
     th.dataset.idx = idx;
     th.dataset.habitId = h.id;
